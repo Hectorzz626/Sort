@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Visualizador de Ordenamiento Interactivo</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
+
+        /* --- Estructura y Fondo --- */
+        body, html {
+            margin: 0; padding: 0;
+            overflow: hidden; height: 100%;
+            font-family: 'Inter', sans-serif;
+        }
+        #background-container { position: fixed; inset: 0; z-index: -1; }
+        #background-container .bg-layer {
+            width: 100%; height: 100%;
+            background-size: cover; background-position: center;
+            transition: transform 0.2s ease-out;
+        }
+        #glcanvas {
+            width: 100%; height: 100%;
+            display: block; cursor: grab;
+        }
+        #glcanvas.grabbing {
+            cursor: grabbing;
+        }
+
+        /* --- Indicación Visual --- */
+        #drag-instruction {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background-color: rgba(20, 20, 30, 0.7);
+            padding: 8px 15px;
+            border-radius: 10px;
+            color: #f0f0f0;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 10;
+            opacity: 1;
+            transition: opacity 0.5s ease-in-out;
+            pointer-events: all;
+        }
+        #drag-instruction img {
+            width: 24px;
+            height: 24px;
+            filter: invert(1);
+        }
+        #drag-instruction.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* --- Paletas de Colores para la UI --- */
+        :root {
+            --slider-track: #4a4a4a;
+            --control-bg: rgba(20, 20, 30, 0.7);
+            --text-color: #f0f0f0;
+            --slider-thumb: #1e90ff;
+            --gradient-start: #4e54c8;
+            --gradient-end: #1a1a2e;
+        }
+        body[data-theme="pink"] { --slider-thumb: #ff4081; }
+        body[data-theme="red"] {
+            --slider-thumb: #e53935;
+            --gradient-start: #ff512f;
+            --gradient-end: #dd2476;
+        }
+
+        /* --- Estilos de la Interfaz de Controles --- */
+        #controls {
+            position: absolute; bottom: 20px; left: 50%;
+            transform: translateX(-50%); background: var(--control-bg);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px;
+            padding: 15px 25px; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            display: flex; align-items: center; gap: 18px; color: var(--text-color);
+        }
+        .control-group { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+        .control-group label { font-size: 14px; margin-bottom: 4px; font-weight: 500; }
+        .button-container { display: flex; gap: 10px; }
+        .action-btn {
+            background-color: var(--slider-thumb); color: white;
+            border: none; border-radius: 6px;
+            padding: 10px 15px; cursor: pointer;
+            font-size: 14px; font-weight: 500;
+            transition: background-color 0.2s, transform 0.1s, filter 0.2s;
+        }
+        .action-btn:hover { filter: brightness(1.15); }
+        .action-btn:active { transform: scale(0.95); }
+        .input-group { display: flex; align-items: center; gap: 8px; }
+        
+        input[type="text"]#sphereCountInput {
+            width: 55px; background-color: #3a3a3a;
+            color: var(--text-color); border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px; padding: 8px; text-align: center;
+            font-family: 'Inter', sans-serif; font-size: 14px;
+        }
+        input[type="range"] {
+            -webkit-appearance: none; appearance: none;
+            width: 120px; height: 6px; background: var(--slider-track);
+            border-radius: 3px; outline: none; cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 18px; height: 18px; background: var(--slider-thumb);
+            border-radius: 50%; border: 2px solid white;
+            transition: transform 0.1s, background-color 0.2s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.1); }
+        .palette-selector { display: flex; gap: 8px; }
+        .palette-option {
+            width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
+            border: 2px solid transparent; transition: border-color 0.2s, transform 0.1s;
+        }
+        .palette-option.active { border-color: white; }
+        .palette-option:active { transform: scale(0.9); }
+    </style>
+</head>
+<body data-theme="original">
+    
+    <div id="background-container"><div class="bg-layer"></div></div>
+
+    <div id="drag-instruction">
+        <img src="click.png" alt="Icono de doble clic">
+        <span>Doble clic y arrastra para mover</span>
+    </div>
+
+    <canvas id="glcanvas"></canvas>
+
+    <div id="controls">
+        <div class="control-group">
+            <label>Zoom</label>
+            <input type="range" id="zoomSlider" min="0" max="100" step="1" value="50">
+        </div>
+        <div class="control-group">
+            <label>Velocidad</label>
+            <input type="range" id="speedSlider" min="0.01" max="0.2" step="0.005" value="0.08">
+        </div>
+        <div class="control-group">
+            <label for="sphereCountInput">Cantidad</label>
+            <div class="input-group">
+                <input type="text" id="sphereCountInput" value="10">
+                <button id="applyCountButton" class="action-btn" style="padding: 8px 12px;">Aplicar</button>
+            </div>
+        </div>
+        <div class="control-group">
+            <label>Acciones</label>
+            <div class="button-container">
+                <button id="shuffleButton" class="action-btn">Desordenar</button>
+                <button id="sortButton" class="action-btn">Ordenar</button>
+            </div>
+        </div>
+        <div class="control-group">
+            <label>Paleta</label>
+            <div class="palette-selector">
+                <div class="palette-option active" data-palette="original" style="background: linear-gradient(45deg, #4e54c8, #1e90ff);"></div>
+                <div class="palette-option" data-palette="pink" style="background: linear-gradient(45deg, #f8b195, #ff4081);"></div>
+                <div class="palette-option" data-palette="red" style="background: linear-gradient(45deg, #ff512f, #e53935);"></div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // ===================================
+    //  PARTE 1: LOGICA DE LAS ESFERAS Y ORDENAMIENTO
+    // ===================================
+
+    const canvas = document.getElementById('glcanvas');
+    const gl = canvas.getContext('webgl');
+    if (!gl) { alert("WebGL no está disponible en este navegador."); }
+
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; gl.viewport(0, 0, canvas.width, canvas.height); }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- Shaders ---
+    const vsSource = `
+        attribute vec3 aPosition; attribute vec3 aNormal;
+        uniform mat4 uModelViewMatrix; uniform mat4 uProjectionMatrix; uniform mat4 uNormalMatrix;
+        varying vec3 vNormal; varying vec3 vPosition;
+        void main(void){
+            gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+            vNormal = (uNormalMatrix * vec4(aNormal, 0.0)).xyz;
+            vPosition = (uModelViewMatrix * vec4(aPosition, 1.0)).xyz;
+        }
+    `;
+    const fsSource = `
+        precision mediump float;
+        varying vec3 vNormal; varying vec3 vPosition;
+        uniform vec3 uColor;
+        void main(void){
+            vec3 lightDirection = normalize(vec3(0.5, 1.0, 1.5) - vPosition);
+            vec3 normal = normalize(vNormal);
+            float diffuse = max(dot(normal, lightDirection), 0.0);
+            float ambient = 0.35;
+            gl_FragColor = vec4(uColor * (diffuse + ambient), 1.0);
+        }
+    `;
+
+    function compile(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { throw new Error(gl.getShaderInfoLog(s)); } return s; }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vsSource));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fsSource));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { throw new Error(gl.getProgramInfoLog(prog)); }
+    gl.useProgram(prog);
+
+    const attribPos = gl.getAttribLocation(prog, "aPosition"); const attribNormal = gl.getAttribLocation(prog, "aNormal");
+    const uniMV = gl.getUniformLocation(prog, "uModelViewMatrix"); const uniP = gl.getUniformLocation(prog, "uProjectionMatrix");
+    const uniNormal = gl.getUniformLocation(prog, "uNormalMatrix"); const uniColor = gl.getUniformLocation(prog, "uColor");
+    
+    // --- Creación de Geometrías ---
+    function createSphere(radius, lats, longs) { const pos = [], normals = [], idx = []; for (let i = 0; i <= lats; i++) { const latAng = Math.PI * i / lats; const sinLat = Math.sin(latAng), cosLat = Math.cos(latAng); for (let j = 0; j <= longs; j++) { const longAng = 2 * Math.PI * j / longs; const sinLong = Math.sin(longAng), cosLong = Math.cos(longAng); const x = cosLong * sinLat, y = cosLat, z = sinLong * sinLat; pos.push(radius * x, radius * y, radius * z); normals.push(x, y, z); } } for (let i = 0; i < lats; i++) { for (let j = 0; j < longs; j++) { const first = (i * (longs + 1)) + j; const second = first + longs + 1; idx.push(first, second, first + 1, second, second + 1, first + 1); } } return { positions: new Float32Array(pos), normals: new Float32Array(normals), indices: new Uint16Array(idx) }; }
+    function createHeart() { const p=[],n=[],x=[],d=0.05,l=24; for(let i=0;i<=l;i++){ const a=i/l*2*Math.PI,t=Math.pow(Math.sin(a),3),s=13*Math.cos(a)-5*Math.cos(2*a)-2*Math.cos(3*a)-Math.cos(4*a);p.push(16*t*.03,s*.03,d),p.push(16*t*.03,s*.03,-d),n.push(0,0,1,0,0,-1)}for(let i=0;i<l*2;i+=2)x.push(i,i+1,i+2,i+1,i+3,i+2);const c=p.length/3;p.push(0,0,d);const m=p.length/3;p.push(0,0,-d);for(let i=0;i<l;i++){const a=2*i;x.push(c,a,a+2),x.push(m,a+3,a+1)} return { positions: new Float32Array(p), normals: new Float32Array(n), indices: new Uint16Array(x) }; }
+    
+    const sphereGeometry = createSphere(1.0, 30, 30);
+    const heartGeometry = createHeart();
+
+    function makeBuffer(data, type = gl.ARRAY_BUFFER) { const b = gl.createBuffer(); gl.bindBuffer(type, b); gl.bufferData(type, data, gl.STATIC_DRAW); return b; }
+    
+    const spherePosBuf = makeBuffer(sphereGeometry.positions); const sphereNormalBuf = makeBuffer(sphereGeometry.normals); const sphereIdxBuf = makeBuffer(sphereGeometry.indices, gl.ELEMENT_ARRAY_BUFFER);
+    const heartPosBuf = makeBuffer(heartGeometry.positions); const heartNormalBuf = makeBuffer(heartGeometry.normals); const heartIdxBuf = makeBuffer(heartGeometry.indices, gl.ELEMENT_ARRAY_BUFFER);
+    
+    // --- Funciones de Matemáticas ---
+    function mat4Identity() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
+    function mat4Multiply(a, b) { const o = new Float32Array(16); for (let i = 0; i < 4; i++) { for (let j = 0; j < 4; j++) { o[i + j * 4] = a[i] * b[j * 4] + a[i + 4] * b[j * 4 + 1] + a[i + 8] * b[j * 4 + 2] + a[i + 12] * b[j * 4 + 3]; } } return o; }
+    function mat4Translate(tx, ty, tz) { const m = mat4Identity(); m[12] = tx; m[13] = ty; m[14] = tz; return m; }
+    function mat4Scale(sx, sy, sz) { const m = mat4Identity(); m[0] = sx; m[5] = sy; m[10] = sz; return m; }
+    function mat4RotateX(a) { const c=Math.cos(a),s=Math.sin(a); return new Float32Array([1,0,0,0, 0,c,-s,0, 0,s,c,0, 0,0,0,1]); }
+    function mat4RotateY(a) { const c=Math.cos(a),s=Math.sin(a); return new Float32Array([c,0,s,0,0,1,0,0,-s,0,c,0,0,0,0,1]); }
+    function mat4Invert(m) { return m; }
+    function mat4Transpose(m) { const o = new Float32Array(16); o[0]=m[0]; o[1]=m[4]; o[2]=m[8]; o[3]=m[12]; o[4]=m[1]; o[5]=m[5]; o[6]=m[9]; o[7]=m[13]; o[8]=m[2]; o[9]=m[6]; o[10]=m[10]; o[11]=m[14]; o[12]=m[3]; o[13]=m[7]; o[14]=m[11]; o[15]=m[15]; return o;}
+    function mat4Perspective(fovy, asp, n, f) { const g = 1 / Math.tan(fovy / 2); const o = new Float32Array(16); o[0] = g / asp; o[5] = g; o[10] = (f + n) / (n - f); o[11] = -1; o[14] = 2 * f * n / (n - f); return o; }
+    function mat4LookAt(e, c, u) { const fx = c[0] - e[0], fy = c[1] - e[1], fz = c[2] - e[2]; const rl = 1 / Math.hypot(fx, fy, fz); const f = [fx * rl, fy * rl, fz * rl]; const ul = 1 / Math.hypot(u[0], u[1], u[2]); const uu = [u[0] * ul, u[1] * ul, u[2] * ul]; const sx = f[1] * uu[2] - f[2] * uu[1], sy = f[2] * uu[0] - f[0] * uu[2], sz = f[0] * uu[1] - f[1] * uu[0]; const rl2 = 1 / Math.hypot(sx, sy, sz); const s = [sx * rl2, sy * rl2, sz * rl2]; const up = [f[1] * s[2] - f[2] * s[1], f[2] * s[0] - f[0] * s[2], f[0] * s[1] - f[1] * s[0]]; const o = new Float32Array(16); o[0] = s[0]; o[4] = s[1]; o[8] = s[2]; o[12] = -(s[0] * e[0] + s[1] * e[1] + s[2] * e[2]); o[1] = up[0]; o[5] = up[1]; o[9] = up[2]; o[13] = -(up[0] * e[0] + up[1] * e[1] + up[2] * e[2]); o[2] = -f[0]; o[6] = -f[1]; o[10] = -f[2]; o[14] = f[0] * e[0] + f[1] * e[1] + f[2] * e[2]; o[3] = 0; o[7] = 0; o[11] = 0; o[15] = 1; return o; }
+
+    let numSpheres = 10; const SPACING = 3.0; let spheres = []; let currentSphereColor = [0.117, 0.565, 1.0]; 
+    let isSorting = false; let sortState = { i: 0, j: 0 };
+    let animationState = { active: false, sphere1: null, sphere2: null, progress: 0, swapIndex: -1 };
+    
+    let isEasterEggActive = false;
+    let floatingHearts = [];
+    const heartFlipMatrix = mat4RotateX(Math.PI); // Matriz para voltear los corazones
+
+    let cameraTheta = Math.PI / 2; let cameraPhi = 1.5; 
+
+    function mapValueToRadius(value, in_min, in_max, out_min, out_max) { return (value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min; }
+    
+    function initializeSpheres() {
+        spheres = []; const values = Array.from({length: numSpheres}, (_, i) => i + 1);
+        for (let i = values.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [values[i], values[j]] = [values[j], values[i]]; }
+        const totalWidth = (numSpheres - 1) * SPACING; const startX = -totalWidth / 2;
+        for(let i = 0; i < numSpheres; i++) {
+            const x = startX + i * SPACING;
+            spheres.push({ value: values[i], radius: mapValueToRadius(values[i], 1, numSpheres, 0.4, 1.2), currentPos: [x, 0, 0], targetPos: [x, 0, 0] });
+        }
+    }
+
+    function advanceSortState() { sortState.j++; if (sortState.j >= numSpheres - sortState.i - 1) { sortState.j = 0; sortState.i++; } }
+    
+    gl.enable(gl.DEPTH_TEST);
+    function draw() {
+        const animationSpeed = parseFloat(document.getElementById("speedSlider").value);
+        if (animationState.active) {
+            animationState.progress += animationSpeed; const p = Math.min(animationState.progress, 1.0);
+            const pos1_start = animationState.sphere1.targetPos; const pos2_start = animationState.sphere2.targetPos;
+            animationState.sphere1.currentPos[0] = pos1_start[0] + (pos2_start[0] - pos1_start[0]) * p;
+            animationState.sphere2.currentPos[0] = pos2_start[0] + (pos1_start[0] - pos2_start[0]) * p;
+            if (animationState.progress >= 1.0) {
+                const j = animationState.swapIndex; [spheres[j].targetPos, spheres[j + 1].targetPos] = [spheres[j + 1].targetPos, spheres[j].targetPos];
+                [spheres[j], spheres[j + 1]] = [spheres[j + 1], spheres[j]]; animationState.active = false; advanceSortState();
+            }
+        }
+        if (isSorting && !animationState.active) {
+            if (sortState.i < numSpheres - 1) { const j = sortState.j; if (spheres[j].value > spheres[j + 1].value) { animationState = { active: true, sphere1: spheres[j], sphere2: spheres[j + 1], progress: 0, swapIndex: j }; } else { advanceSortState(); } } else { isSorting = false; }
+        }
+
+        gl.clearColor(0.0, 0.0, 0.0, 0.0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        
+        const proj = mat4Perspective(Math.PI / 4, canvas.width / canvas.height, 0.1, 100);
+        const zoomSlider = document.getElementById('zoomSlider');
+        const sliderValue = parseFloat(zoomSlider.value);
+        const MIN_DISTANCE = 5, MAX_DISTANCE = 60;
+        const radius = MAX_DISTANCE - (sliderValue / 100) * (MAX_DISTANCE - MIN_DISTANCE);
+
+        const eyeX = radius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+        const eyeY = radius * Math.cos(cameraPhi);
+        const eyeZ = radius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+        const view = mat4LookAt([eyeX, eyeY, eyeZ], [0, 0, 0], [0, 1, 0]);
+        
+        const activeGeometry = isEasterEggActive ? heartGeometry : sphereGeometry;
+        const activePosBuf = isEasterEggActive ? heartPosBuf : spherePosBuf;
+        const activeNormalBuf = isEasterEggActive ? heartNormalBuf : sphereNormalBuf;
+        const activeIdxBuf = isEasterEggActive ? heartIdxBuf : sphereIdxBuf;
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, activePosBuf); gl.vertexAttribPointer(attribPos, 3, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(attribPos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, activeNormalBuf); gl.vertexAttribPointer(attribNormal, 3, gl.FLOAT, false, 0, 0); gl.enableVertexAttribArray(attribNormal);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, activeIdxBuf);
+        
+        gl.uniform3fv(uniColor, currentSphereColor);
+        
+        spheres.forEach(obj => {
+            const translateMatrix = mat4Translate(obj.currentPos[0], obj.currentPos[1], obj.currentPos[2]);
+            const scaleMatrix = mat4Scale(obj.radius, obj.radius, obj.radius);
+            let model = mat4Multiply(translateMatrix, scaleMatrix);
+            if (isEasterEggActive) { model = mat4Multiply(model, heartFlipMatrix); } // Aplicar rotación a los corazones
+            const modelView = mat4Multiply(view, model);
+            gl.uniformMatrix4fv(uniP, false, proj); gl.uniformMatrix4fv(uniMV, false, modelView);
+            let normalMatrix = mat4Transpose(mat4Invert(modelView)); gl.uniformMatrix4fv(uniNormal, false, normalMatrix);
+            gl.drawElements(gl.TRIANGLES, activeGeometry.indices.length, gl.UNSIGNED_SHORT, 0);
+        });
+
+        if (isEasterEggActive) {
+            floatingHearts.forEach(heart => {
+                heart.y += heart.vy;
+                heart.rot += heart.vRot;
+                if (heart.y > 25) { heart.y = -25; }
+
+                const translateMatrix = mat4Translate(heart.x, heart.y, heart.z);
+                const scaleMatrix = mat4Scale(heart.scale, heart.scale, heart.scale);
+                const rotateYMatrix = mat4RotateY(heart.rot);
+
+                let model = mat4Multiply(heartFlipMatrix, scaleMatrix);
+                model = mat4Multiply(rotateYMatrix, model);
+                model = mat4Multiply(translateMatrix, model);
+
+                const modelView = mat4Multiply(view, model);
+                gl.uniformMatrix4fv(uniMV, false, modelView);
+                let normalMatrix = mat4Transpose(mat4Invert(modelView)); 
+                gl.uniformMatrix4fv(uniNormal, false, normalMatrix);
+                gl.drawElements(gl.TRIANGLES, heartGeometry.indices.length, gl.UNSIGNED_SHORT, 0);
+            });
+        }
+        
+        requestAnimationFrame(draw);
+    }
+    
+    // ===================================
+    // PARTE 2: LOGICA DE LA INTERFAZ Y FONDO
+    // ===================================
+    
+    function hexToRgb(hex) {
+        let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? [ parseInt(result[1], 16) / 255, parseInt(result[2], 16) / 255, parseInt(result[3], 16) / 255 ] : null;
+    }
+    
+    const sphereCountInput = document.getElementById('sphereCountInput');
+    sphereCountInput.addEventListener('input', (e) => {
+        if (e.target.value.toLowerCase() === 'gitzel') {
+            activateEasterEgg();
+        }
+    });
+
+    function activateEasterEgg() {
+        if (isEasterEggActive) return;
+        isEasterEggActive = true;
+        document.querySelector('.palette-option[data-palette="pink"]').click();
+        
+        floatingHearts = [];
+        for (let i = 0; i < 30; i++) {
+            floatingHearts.push({
+                x: (Math.random() - 0.5) * 50,
+                y: (Math.random() - 0.5) * 50,
+                z: (Math.random() - 0.5) * 50,
+                vy: Math.random() * 0.05 + 0.01,
+                scale: Math.random() * 0.8 + 0.7, // Rango de tamaño aumentado
+                rot: Math.random() * Math.PI * 2,
+                vRot: (Math.random() - 0.5) * 0.02
+            });
+        }
+        initializeSpheres();
+    }
+
+    function deactivateEasterEgg() {
+        if (!isEasterEggActive) return;
+        isEasterEggActive = false;
+        floatingHearts = [];
+    }
+
+    document.getElementById('applyCountButton').onclick = () => {
+        const input = document.getElementById('sphereCountInput');
+        let count = parseInt(input.value, 10);
+        if (isNaN(count)) return;
+
+        deactivateEasterEgg(); 
+        isSorting = false; animationState.active = false;
+        
+        if (count < 2) count = 2;
+        if (count > 20) count = 20;
+        input.value = count; numSpheres = count;
+        initializeSpheres();
+    };
+
+    document.getElementById('shuffleButton').onclick = () => { isSorting = false; animationState.active = false; initializeSpheres(); };
+    document.getElementById('sortButton').onclick = () => { if (isSorting || spheres.length === 0) return; isSorting = true; sortState = { i: 0, j: 0 }; };
+
+    const bgContainer = document.getElementById('background-container');
+    const bgLayer = bgContainer.querySelector('.bg-layer');
+    function setGradientBackground() { const startColor = getComputedStyle(document.body).getPropertyValue('--gradient-start'); const endColor = getComputedStyle(document.body).getPropertyValue('--gradient-end'); bgLayer.style.backgroundImage = `radial-gradient(circle, ${startColor}, ${endColor} 80%)`; }
+
+    document.querySelectorAll('.palette-option').forEach(button => {
+        button.addEventListener('click', (e) => {
+            document.querySelectorAll('.palette-option').forEach(btn => btn.classList.remove('active'));
+            const target = e.currentTarget; target.classList.add('active');
+            const theme = target.dataset.palette; document.body.dataset.theme = theme;
+            setTimeout(() => {
+                const themeColorHex = getComputedStyle(document.body).getPropertyValue('--slider-thumb');
+                currentSphereColor = hexToRgb(themeColorHex.trim());
+                if (theme === 'pink') { bgLayer.style.backgroundImage = `radial-gradient(circle, #f8b195, #c471ed 80%)`; } else { setGradientBackground(); }
+            }, 50);
+        });
+    });
+
+    let isDragging = false; let lastMouseX = 0; let lastMouseY = 0;
+    let lastClickTime = 0; const DBL_CLICK_THRESHOLD = 300; 
+    let instructionHidden = false;
+
+    canvas.addEventListener('mousedown', (e) => {
+        const now = new Date().getTime();
+        if (now - lastClickTime < DBL_CLICK_THRESHOLD) {
+            e.preventDefault(); isDragging = true; canvas.classList.add('grabbing');
+            lastMouseX = e.clientX; lastMouseY = e.clientY;
+
+            if (!instructionHidden) {
+                document.getElementById('drag-instruction').classList.add('hidden');
+                instructionHidden = true;
+            }
+        }
+        lastClickTime = now;
+    });
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        e.preventDefault();
+        const deltaX = e.clientX - lastMouseX;
+        const deltaY = e.clientY - lastMouseY;
+        
+        cameraTheta += deltaX * 0.008;
+        cameraPhi -= deltaY * 0.008;
+        cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+    });
+    window.addEventListener('mouseup', () => {
+        isDragging = false; canvas.classList.remove('grabbing');
+    });
+
+    document.addEventListener("mousemove", (e) => {
+        if (isDragging) return;
+        const moveX = (e.clientX / window.innerWidth - 0.5) * 20; const moveY = (e.clientY / window.innerHeight - 0.5) * 20;
+        bgLayer.style.transform = `translate(${moveX}px, ${moveY}px) scale(1.03)`;
+    });
+
+    initializeSpheres();
+    setGradientBackground();
+    requestAnimationFrame(draw);
+</script>
+</body>
+</html>
